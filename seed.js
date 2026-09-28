@@ -18,6 +18,8 @@ function randomDate() {
 // Start clean so running the seed twice still leaves exactly one copy
 db.exec("DELETE FROM orders");
 
+db.exec("DELETE FROM sqlite_sequence WHERE name = 'orders'");
+
 const insert = db.prepare(
   "INSERT INTO orders (customer, product, amount, created_at) VALUES (?, ?, ?, ?)"
 );

@@ -38,3 +38,9 @@ export function getReportData() {
     ordersPerDay,
   };
 }
+
+export function getAllOrders() {
+  return db
+    .prepare("SELECT id, customer, product, amount, created_at FROM orders ORDER BY id")
+    .all();
+}
