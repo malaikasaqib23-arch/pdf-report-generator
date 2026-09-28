@@ -12,8 +12,9 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// Generate a report: query -> render -> store -> return link
-app.post("/reports", async (req, res) => {
+let inFlight = null; // the report currently being generated, if any
+
+async function createReport() {
   const createdAt = new Date().toISOString();
   const { lastInsertRowid } = db
     .prepare("INSERT INTO reports (path, created_at) VALUES (?, ?)")
@@ -25,11 +26,51 @@ app.post("/reports", async (req, res) => {
     const html = buildHtml(getReportData(), getAllOrders());
     await renderPdf(html, filePath);
     db.prepare("UPDATE reports SET path = ? WHERE id = ?").run(filePath, id);
-    res.status(201).json({ id, file: `/reports/${id}/file` });
+    return id;
   } catch (err) {
     db.prepare("DELETE FROM reports WHERE id = ?").run(id); // no half-finished records
+    throw err;
+  }
+}
+
+// Generate a report: query -> render -> store -> return link
+app.post("/reports", async (req, res) => {
+  const force = req.body?.force === true;
+
+  try {
+    if (!force) {
+      // Guard 1: a report is being generated right now -> wait for it, same id
+      if (inFlight) {
+        const id = await inFlight;
+        return res.status(200).json({ id, file: `/reports/${id}/file` });
+      }
+
+      // Guard 2: a finished report already exists for today -> reuse it
+      const today = new Date().toISOString().slice(0, 10);
+      const existing = db
+        .prepare(
+          "SELECT id FROM reports WHERE path != '' AND substr(created_at, 1, 10) = ? ORDER BY id DESC LIMIT 1"
+        )
+        .get(today);
+      if (existing) {
+        return res.status(200).json({ id: existing.id, file: `/reports/${existing.id}/file` });
+      }
+
+      inFlight = createReport();
+      try {
+        const id = await inFlight;
+        return res.status(201).json({ id, file: `/reports/${id}/file` });
+      } finally {
+        inFlight = null;
+      }
+    }
+
+    // force: true -> always make a fresh one
+    const id = await createReport();
+    return res.status(201).json({ id, file: `/reports/${id}/file` });
+  } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Report generation failed" });
+    return res.status(500).json({ error: "Report generation failed" });
   }
 });
 
